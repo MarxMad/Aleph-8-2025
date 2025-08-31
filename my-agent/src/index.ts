@@ -23,6 +23,8 @@ import {
   parseArguments,
 } from "./config/index.ts";
 import { initializeDatabase } from "./database/index.ts";
+import { tokenIntegration } from "./blockchain/tokenIntegration.js";
+import { createHTTPServer } from "./httpServer.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,12 +44,15 @@ export function createAgent(
   token: string
 ) {
   elizaLogger.success(
-    elizaLogger.successesTitle,
-    "Creating runtime for character",
-    character.name,
+    `Creating runtime for character ${character.name}`
   );
 
   nodePlugin ??= createNodePlugin();
+
+  // Registrar comandos de tokens si está disponible
+  if (character.name === 'Launcher') {
+    tokenIntegration.registerCommands(character);
+  }
 
   return new AgentRuntime({
     databaseAdapter: db,
@@ -99,8 +104,7 @@ async function startAgent(character: Character, directClient: DirectClient) {
     return runtime;
   } catch (error) {
     elizaLogger.error(
-      `Error starting agent for character ${character.name}:`,
-      error,
+      `Error starting agent for character ${character.name}: ${error}`
     );
     console.error(error);
     throw error;
@@ -128,7 +132,7 @@ const checkPortAvailable = (port: number): Promise<boolean> => {
 
 const startAgents = async () => {
   const directClient = new DirectClient();
-  let serverPort = parseInt(settings.SERVER_PORT || "3000");
+  let serverPort = parseInt(settings.SERVER_PORT || "3001");
   const args = parseArguments();
 
   let charactersArg = args.characters || args.character;
@@ -139,12 +143,15 @@ const startAgents = async () => {
     characters = await loadCharacters(charactersArg);
   }
   console.log("characters", characters);
+  
+  let agentRuntime: AgentRuntime | undefined;
+  
   try {
     for (const character of characters) {
-      await startAgent(character, directClient as DirectClient);
+      agentRuntime = await startAgent(character, directClient as DirectClient);
     }
   } catch (error) {
-    elizaLogger.error("Error starting agents:", error);
+    elizaLogger.error(`Error starting agents: ${error}`);
   }
 
   while (!(await checkPortAvailable(serverPort))) {
@@ -160,8 +167,20 @@ const startAgents = async () => {
 
   directClient.start(serverPort);
 
-  if (serverPort !== parseInt(settings.SERVER_PORT || "3000")) {
+  if (serverPort !== parseInt(settings.SERVER_PORT || "3001")) {
     elizaLogger.log(`Server started on alternate port ${serverPort}`);
+  }
+
+  // Crear y iniciar servidor HTTP
+  if (agentRuntime) {
+    const httpApp = createHTTPServer(agentRuntime);
+    const httpPort = serverPort + 1; // HTTP en puerto siguiente
+    
+    httpApp.listen(httpPort, () => {
+      elizaLogger.success(`HTTP Server running on port ${httpPort}`);
+      elizaLogger.success(`Agent endpoints available at http://localhost:${httpPort}`);
+      elizaLogger.success(`Frontend can connect to: http://localhost:${httpPort}`);
+    });
   }
 
   const isDaemonProcess = process.env.DAEMON_PROCESS === "true";
@@ -173,6 +192,6 @@ const startAgents = async () => {
 };
 
 startAgents().catch((error) => {
-  elizaLogger.error("Unhandled error in startAgents:", error);
+  elizaLogger.error(`Unhandled error in startAgents: ${error}`);
   process.exit(1);
 });
