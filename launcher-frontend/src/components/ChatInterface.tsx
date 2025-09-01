@@ -26,12 +26,27 @@ export default function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'end',
+        inline: 'nearest'
+      });
+    }
   };
 
+  // Scroll automático cuando se agregan mensajes
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Scroll automático cuando cambia el estado de loading
+  useEffect(() => {
+    if (!isLoading) {
+      // Pequeño delay para asegurar que el DOM se actualice
+      setTimeout(scrollToBottom, 100);
+    }
+  }, [isLoading]);
 
   const sendMessage = async () => {
     if (!inputText.trim() || isLoading) return;
@@ -46,6 +61,9 @@ export default function ChatInterface() {
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsLoading(true);
+    
+    // Scroll inmediato después de agregar mensaje del usuario
+    setTimeout(scrollToBottom, 50);
 
     try {
       const result = await agentService.sendMessage(inputText, 'Launcher');
@@ -59,6 +77,9 @@ export default function ChatInterface() {
         };
 
         setMessages(prev => [...prev, agentMessage]);
+        
+        // Scroll automático cuando llega la respuesta del agente
+        setTimeout(scrollToBottom, 100);
       } else {
         throw new Error('Error en la respuesta del agente');
       }
@@ -67,12 +88,15 @@ export default function ChatInterface() {
       
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: 'Error: No se pudo conectar con el agente. Asegúrate de que esté ejecutándose en el puerto 3000.',
+        text: 'Error: No se pudo conectar con el agente. Asegúrate de que esté ejecutándose en el puerto 3001.',
         sender: 'agent',
         timestamp: new Date()
       };
 
       setMessages(prev => [...prev, errorMessage]);
+      
+      // Scroll automático cuando hay error
+      setTimeout(scrollToBottom, 100);
     } finally {
       setIsLoading(false);
     }

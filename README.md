@@ -30,7 +30,7 @@
 │  └─────────────┘ └─────────────┘ └─────────────┘          │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              │ HTTP API (Puerto 3002)
+                              │ HTTP API (Puerto 3001)
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Agente Launcher                         │
@@ -38,6 +38,18 @@
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐          │
 │  │ OpenAI API  │ │ Blockchain  │ │ HTTP Server │          │
 │  │ Integration │ │ Integration │ │   (Express) │          │
+│  │  (GPT-4o)   │ │ Integration │ │   (Express) │          │
+│  └─────────────┘ └─────────────┘ └─────────────┘          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ Twitter Integration
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Twitter Client                          │
+│                  @PumaagentAI                             │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐          │
+│  │ Auto Posts  │ │ AI Replies  │ │ Engagement  │          │
+│  │ DeFi Content│ │ to Mentions │ │ Analytics   │          │
 │  └─────────────┘ └─────────────┘ └─────────────┘          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -79,15 +91,25 @@ nano .env
 
 **Ejemplo de .env:**
 ```env
-# Configuración del Agente
+# OpenAI Configuration (REQUERIDO)
+OPENAI_API_KEY=sk-proj-...tu_api_key_real...
+
+# Twitter Integration (OPCIONAL)
+TWITTER_DRY_RUN=false
+TWITTER_USERNAME=tu_usuario_twitter
+TWITTER_PASSWORD=tu_password_twitter
+TWITTER_EMAIL=tu_email_twitter
+
+# AgentKit Configuration (OPCIONAL)
+CDP_AGENT_KIT_NETWORK=base-mainnet
+CDP_API_KEY_NAME=Agent1
+CDP_API_KEY_PRIVATE_KEY=tu_private_key
+
+# Server Configuration
 SERVER_PORT=3001
+DAEMON_PROCESS=false
 
-# API Keys (REEMPLAZAR CON TUS PROPIAS)
-OPENAI_API_KEY=sk-...tu_api_key_real...
-TWITTER_API_KEY=tu_twitter_api_key
-CDP_API_KEY=tu_cdp_api_key
-
-# Configuración de Blockchain (OPCIONAL)
+# Blockchain Configuration (OPCIONAL)
 PRIVATE_KEY=tu_private_key
 RPC_URL=tu_rpc_url
 FACTORY_ADDRESS=tu_factory_address
@@ -112,9 +134,13 @@ npx pnpm start --characters="characters/launcher.character.json"
 ```
 [INFO] Launcher - Initializing AgentRuntime
 [INFO] Selected model provider: openai
-[SUCCESS] HTTP Server running on port 3002
-[SUCCESS] Agent endpoints available at http://localhost:3002
-[SUCCESS] Frontend can connect to: http://localhost:3002
+[INFO] Selected model: gpt-4o
+[INFO] Initializing Twitter client...
+[INFO] Successfully logged in.
+[INFO] Caching cookies
+[SUCCESS] HTTP Server running on port 3001
+[SUCCESS] Agent endpoints available at http://localhost:3001
+[SUCCESS] Frontend can connect to: http://localhost:3001
 ```
 
 ### 2️⃣ Iniciar el Frontend (DESPUÉS)
@@ -149,22 +175,21 @@ echo "Node.js: $(node --version)"
 echo "pnpm: $(pnpm --version)"
 echo ""
 echo "=== PUERTOS ==="
-echo "Puerto 3001 (Agente): $(lsof -i :3001 | wc -l) servicios"
-echo "Puerto 3002 (HTTP): $(lsof -i :3002 | wc -l) servicios"
+echo "Puerto 3001 (Agente + HTTP): $(lsof -i :3001 | wc -l) servicios"
 echo "Puerto 3000 (Frontend): $(lsof -i :3000 | wc -l) servicios"
 echo ""
 echo "=== ENDPOINTS ==="
-curl -s http://localhost:3002/ | jq '.status' 2>/dev/null || echo "Agente no responde"
+curl -s http://localhost:3001/ | jq '.status' 2>/dev/null || echo "Agente no responde"
 ```
 
 ### Probar Endpoints del Agente
 
 ```bash
 # Estado del agente
-curl http://localhost:3002/
+curl http://localhost:3001/
 
 # Enviar mensaje
-curl -X POST http://localhost:3002/Launcher/message \
+curl -X POST http://localhost:3001/Launcher/message \
   -H "Content-Type: application/json" \
   -d '{"text": "Hola", "userId": "test", "userName": "TestUser"}'
 ```
@@ -177,9 +202,11 @@ curl -X POST http://localhost:3002/Launcher/message \
 |-------|-------|----------|
 | `Promise.withResolvers is not a function` | Node.js < v22 | `nvm use 22` |
 | `Failed to fetch` | Agente no corriendo | Iniciar agente primero |
-| `Error 404` | Endpoint no encontrado | Verificar puerto 3002 |
+| `Error 404` | Endpoint no encontrado | Verificar puerto 3001 |
 | `Error 500` | Error interno del agente | Revisar logs del agente |
 | `Unsupported engine` | Versión de Node.js incorrecta | Actualizar a v22+ |
+| `Project does not have access to model` | Modelo no disponible | Verificar acceso en OpenAI dashboard |
+| `Twitter login failed` | Credenciales incorrectas | Verificar .env de Twitter |
 
 ### Verificar Versiones
 
@@ -197,6 +224,21 @@ nvm use 22
 # Reinstalar pnpm globalmente
 npm uninstall -g pnpm
 npm install -g pnpm
+```
+
+### Verificar Configuración
+
+```bash
+# Verificar puertos
+lsof -i :3001  # Agente + HTTP Server
+lsof -i :3000  # Frontend
+
+# Verificar OpenAI API
+curl -H "Authorization: Bearer $OPENAI_API_KEY" \
+  https://api.openai.com/v1/models
+
+# Verificar Twitter (si está configurado)
+curl http://localhost:3001/ | jq '.agentRuntime'
 ```
 
 ### Reiniciar Servicios
@@ -225,6 +267,14 @@ pnpm dev
 - **Testimonials** - Casos de uso y estadísticas
 - **Footer** - Enlaces y navegación
 
+### Funcionalidades del Chat
+
+- **Auto-scrolling** - Scroll automático a nuevos mensajes
+- **Connection Status** - Indicador de estado de conexión
+- **Error Handling** - Manejo robusto de errores
+- **Responsive Design** - Funciona en todos los dispositivos
+- **Real-time Updates** - Actualizaciones en tiempo real
+
 ### Tecnologías Utilizadas
 
 - **Next.js 15.5.2** - Framework de React
@@ -244,11 +294,13 @@ pnpm dev
 
 ### Capacidades Principales
 
-- **Chat Inteligente** - Respuestas contextuales
+- **Chat Inteligente** - Respuestas contextuales con GPT-4o
 - **Lanzamiento de Tokens** - Integración con blockchain
 - **Configuración de AI Agents** - Gestión de agentes
 - **Análisis de Mercado** - Insights de trading
 - **Gestión de Comunidad** - Herramientas de moderación
+- **Twitter Integration** - Posts automáticos y engagement
+- **Auto-scrolling Chat** - Interfaz de chat mejorada
 
 ### Comandos Disponibles
 
@@ -275,6 +327,14 @@ tokenHelp
 - **Web3** - Interacción con blockchain
 - **Gas Optimization** - Optimización de transacciones
 
+### Integración con Twitter
+
+- **Auto-posting** - Publicaciones automáticas sobre DeFi y AI agents
+- **AI Replies** - Respuestas inteligentes a menciones
+- **Content Generation** - Generación automática de contenido técnico
+- **Engagement Analytics** - Métricas de interacción
+- **Personality** - Personalidad única de Launcher (@PumaagentAI)
+
 ## 📁 Estructura del Proyecto
 
 ```
@@ -285,15 +345,22 @@ Aleph-8-2025/
 │   │   ├── commands/           # Comandos del agente
 │   │   ├── config/             # Configuración
 │   │   ├── database/           # Base de datos
+│   │   ├── clients/            # Clientes (Twitter, Discord)
+│   │   ├── httpServer.ts       # Servidor HTTP Express
 │   │   └── index.ts            # Punto de entrada
 │   ├── characters/             # Configuración de personajes
+│   │   └── launcher.character.json  # Character de Launcher
 │   ├── .env.example           # Variables de entorno
 │   └── package.json           # Dependencias del agente
 ├── launcher-frontend/          # Frontend web
 │   ├── src/
 │   │   ├── app/               # Páginas Next.js
 │   │   ├── components/        # Componentes React
+│   │   │   ├── ChatInterface.tsx    # Interfaz de chat
+│   │   │   ├── Demo.tsx             # Demo del chat
+│   │   │   └── ConnectionStatus.tsx # Estado de conexión
 │   │   └── services/          # Servicios de API
+│   │       └── agentService.ts      # Servicio del agente
 │   ├── public/                # Archivos estáticos
 │   └── package.json           # Dependencias del frontend
 ├── Launcher/                   # Contratos inteligentes
@@ -311,6 +378,14 @@ Aleph-8-2025/
 - Usar archivo `.env` (incluido en `.gitignore`)
 - Rotar API keys regularmente
 - Usar variables de entorno en producción
+- **OpenAI**: Usar `sk-proj-...` format para proyectos
+- **Twitter**: Credenciales seguras en `.env`
+
+### Configuración de Modelos
+
+- **Modelo Principal**: `gpt-4o` (configurado en character)
+- **Fallback**: Sistema de respaldo para errores de API
+- **Rate Limiting**: Protección contra uso excesivo
 
 ### Blockchain
 
@@ -324,13 +399,23 @@ Aleph-8-2025/
 ### Desarrollo Local
 
 ```bash
-# Agente
+# Agente (con Twitter habilitado)
 cd my-agent
-npx pnpm start --characters="characters/launcher.character.json"
+DAEMON_PROCESS=true pnpm start --characters="characters/launcher.character.json"
 
 # Frontend
 cd launcher-frontend
 pnpm dev
+```
+
+### Configuración de Twitter
+
+Para habilitar Twitter, asegúrate de que en `characters/launcher.character.json`:
+```json
+{
+  "clients": ["twitter"],
+  "model": "gpt-4o"
+}
 ```
 
 ### Producción
@@ -367,10 +452,12 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 
 ## 🙏 Agradecimientos
 
-- **OpenAI** - Por proporcionar la API de GPT-4
+- **OpenAI** - Por proporcionar la API de GPT-4o
 - **Next.js Team** - Por el framework web
 - **Tailwind CSS** - Por el sistema de diseño
 - **Ethereum Community** - Por la infraestructura blockchain
+- **ElizaOS Team** - Por el framework de agentes
+- **Twitter API** - Por la integración de redes sociales
 
 ## 📞 Soporte
 
@@ -378,11 +465,44 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 - **Discussions:** [GitHub Discussions](https://github.com/MarxMad/Aleph-8-2025/discussions)
 - **Wiki:** [Documentación detallada](https://github.com/MarxMad/Aleph-8-2025/wiki)
 
+## 🐛 Troubleshooting Rápido
+
+### Twitter no funciona
+```bash
+# Verificar configuración
+cat my-agent/characters/launcher.character.json | grep -A 2 -B 2 "twitter"
+
+# Verificar logs
+tail -f my-agent/logs/agent.log | grep -i twitter
+```
+
+### Chat no responde
+```bash
+# Verificar agente
+curl http://localhost:3001/
+
+# Verificar frontend
+curl http://localhost:3000/
+```
+
+### Error de modelo OpenAI
+```bash
+# Verificar API key
+echo $OPENAI_API_KEY | head -c 20
+
+# Verificar acceso a modelos
+curl -H "Authorization: Bearer $OPENAI_API_KEY" \
+  https://api.openai.com/v1/models | jq '.data[].id'
+```
+
 ## 🌟 Roadmap
 
-- [ ] **v1.1** - Integración con más blockchains
-- [ ] **v1.2** - Dashboard de analytics
-- [ ] **v1.3** - Mobile app nativa
+- [x] **v1.0** - Agente base con OpenAI GPT-4o ✅
+- [x] **v1.1** - Integración con Twitter ✅
+- [x] **v1.2** - Frontend con chat interactivo ✅
+- [x] **v1.3** - Auto-scrolling y UX mejorada ✅
+- [ ] **v1.4** - Dashboard de analytics
+- [ ] **v1.5** - Mobile app nativa
 - [ ] **v2.0** - Multi-tenant architecture
 - [ ] **v2.1** - AI agent marketplace
 

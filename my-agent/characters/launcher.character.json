@@ -1,8 +1,9 @@
 {
   "name": "Launcher",
   "plugins": [],
-  "clients": [],
+  "clients": ["twitter"],
   "modelProvider": "openai",
+  "model": "gpt-4o",
   "settings": {
     "secrets": {},
     "voice": {

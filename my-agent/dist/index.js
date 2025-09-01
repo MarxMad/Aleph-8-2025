@@ -2,7 +2,7 @@
 import { DirectClient } from "@elizaos/client-direct";
 import {
   AgentRuntime,
-  elizaLogger,
+  elizaLogger as elizaLogger2,
   settings as settings3,
   stringToUuid
 } from "@elizaos/core";
@@ -590,6 +590,680 @@ function initializeDatabase(dataDir) {
   }
 }
 
+// src/blockchain/launcherService.ts
+import { ethers } from "ethers";
+var LauncherService = class {
+  provider;
+  signer;
+  factory;
+  // Factory contract
+  aiAgentManager;
+  // AIAgentManager contract
+  constructor(privateKey, rpcUrl) {
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
+    this.signer = new ethers.Wallet(privateKey, this.provider);
+    const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS;
+    const AI_AGENT_MANAGER_ADDRESS = process.env.AI_AGENT_MANAGER_ADDRESS;
+    if (!FACTORY_ADDRESS || !AI_AGENT_MANAGER_ADDRESS) {
+      throw new Error("FACTORY_ADDRESS y AI_AGENT_MANAGER_ADDRESS deben estar configurados en .env");
+    }
+    this.factory = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, this.signer);
+    this.aiAgentManager = new ethers.Contract(AI_AGENT_MANAGER_ADDRESS, AI_AGENT_MANAGER_ABI, this.signer);
+  }
+  async createToken(tokenData) {
+    try {
+      const creationFee = await this.factory.creationFee();
+      const tx = await this.factory.createToken(
+        tokenData.name,
+        tokenData.symbol,
+        tokenData.totalSupply,
+        tokenData.enableAIAgents,
+        { value: creationFee }
+      );
+      const receipt = await tx.wait();
+      const event = receipt?.logs.find(
+        (log) => log.topics[0] === this.factory.interface.getEventTopic("TokenCreated")
+      );
+      if (event) {
+        const parsed = this.factory.interface.parseLog(event);
+        return {
+          success: true,
+          transactionHash: tx.hash,
+          tokenAddress: parsed.args[0]
+        };
+      }
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        data: receipt
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al crear token"
+      };
+    }
+  }
+  async configureAIAgents(tokenAddress, config) {
+    try {
+      const token = new ethers.Contract(tokenAddress, TOKEN_ABI, this.signer);
+      const tx = await token.configureAIAgents(
+        config.communityManager,
+        config.marketingAI,
+        config.dataAnalyst,
+        config.tradingAssistant
+      );
+      await tx.wait();
+      return { success: true, transactionHash: tx.hash };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al configurar AI agents"
+      };
+    }
+  }
+  async createAIAgent(agentData) {
+    try {
+      const tx = await this.aiAgentManager.createAgent(
+        agentData.tokenAddress,
+        agentData.agentType,
+        ethers.parseEther(agentData.budget.toString()),
+        agentData.configuration
+      );
+      const receipt = await tx.wait();
+      const event = receipt?.logs.find(
+        (log) => log.topics[0] === this.aiAgentManager.interface.getEventTopic("AgentCreated")
+      );
+      if (event) {
+        const parsed = this.aiAgentManager.interface.parseLog(event);
+        return {
+          success: true,
+          agentId: parsed.args[0],
+          transactionHash: tx.hash
+        };
+      }
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        data: receipt
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al crear AI agent"
+      };
+    }
+  }
+  async getTokenInfo(tokenAddress) {
+    try {
+      const token = new ethers.Contract(tokenAddress, TOKEN_ABI, this.signer);
+      const info = await token.getTokenInfo();
+      return {
+        success: true,
+        data: {
+          name: info[0],
+          symbol: info[1],
+          totalSupply: info[2],
+          decimals: info[3],
+          launchTimestamp: info[4]
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al obtener informaci\xF3n del token"
+      };
+    }
+  }
+  async getUserTokens(userAddress) {
+    try {
+      const tokens = await this.factory.getUserTokens(userAddress);
+      return {
+        success: true,
+        data: tokens
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al obtener tokens del usuario"
+      };
+    }
+  }
+  async getAllTokens() {
+    try {
+      const tokens = await this.factory.getAllTokens();
+      return {
+        success: true,
+        data: tokens
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al obtener todos los tokens"
+      };
+    }
+  }
+  async getTokenAgents(tokenAddress) {
+    try {
+      const agents = await this.aiAgentManager.getTokenAgents(tokenAddress);
+      return {
+        success: true,
+        data: agents
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Error desconocido al obtener agentes del token"
+      };
+    }
+  }
+};
+var FACTORY_ABI = [
+  "function creationFee() external view returns (uint256)",
+  "function createToken(string name, string symbol, uint256 totalSupply, bool enableAIAgents) external payable returns (address)",
+  "function getUserTokens(address user) external view returns (tuple(address,string,string,uint256,address,uint256,bool,uint256)[])",
+  "function getAllTokens() external view returns (tuple(address,string,string,uint256,address,uint256,bool,uint256)[])",
+  "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 totalSupply)"
+];
+var AI_AGENT_MANAGER_ABI = [
+  "function createAgent(address tokenContract, string agentType, uint256 budget, string configuration) external returns (bytes32)",
+  "function getTokenAgents(address tokenContract) external view returns (tuple(bytes32,string,address,address,bool,uint256,string,uint256,uint256)[])",
+  "event AgentCreated(bytes32 indexed agentId, address indexed tokenContract, address indexed owner, string agentType)"
+];
+var TOKEN_ABI = [
+  "function configureAIAgents(bool communityManager, bool marketingAI, bool dataAnalyst, bool tradingAssistant) external",
+  "function getTokenInfo() external view returns (string, string, uint256, uint256, uint256)"
+];
+
+// src/commands/tokenCommands.ts
+import { ethers as ethers2 } from "ethers";
+var TokenCommands = class {
+  constructor(launcherService) {
+    this.launcherService = launcherService;
+  }
+  async createToken(params) {
+    if (params.length < 3) {
+      return "\u274C **Uso:** `createToken <nombre> <s\xEDmbolo> <supply> [enableAI]`\n\u{1F4DD} **Ejemplo:** `createToken MiToken MT 1000000 true`\n\u{1F4A1} **Par\xE1metros:**\n   \u2022 nombre: Nombre completo del token (m\xEDn 3 caracteres)\n   \u2022 s\xEDmbolo: S\xEDmbolo del token (m\xEDn 2 caracteres)\n   \u2022 supply: Cantidad total de tokens\n   \u2022 enableAI: true/false para habilitar AI agents";
+    }
+    const [name, symbol, supplyStr, enableAI] = params;
+    const supply = parseInt(supplyStr);
+    const enableAIAgents = enableAI === "true";
+    if (isNaN(supply) || supply <= 0) {
+      return "\u274C **Error:** El supply debe ser un n\xFAmero mayor a 0";
+    }
+    if (name.length < 3) {
+      return "\u274C **Error:** El nombre debe tener al menos 3 caracteres";
+    }
+    if (symbol.length < 2) {
+      return "\u274C **Error:** El s\xEDmbolo debe tener al menos 2 caracteres";
+    }
+    try {
+      const result = await this.launcherService.createToken({
+        name,
+        symbol,
+        totalSupply: supply,
+        enableAIAgents
+      });
+      if (result.success) {
+        return `\u2705 **Token Creado Exitosamente!**
+
+\u{1F3F7}\uFE0F **Nombre:** ${name}
+\u{1F48E} **S\xEDmbolo:** ${symbol}
+\u{1F4B0} **Supply:** ${supply.toLocaleString()}
+\u{1F916} **AI Agents:** ${enableAIAgents ? "\u2705 Habilitados" : "\u274C Deshabilitados"}
+\u{1F4CD} **TX Hash:** \`${result.transactionHash}\`
+\u{1F3D7}\uFE0F **Direcci\xF3n:** ${result.tokenAddress ? `\`${result.tokenAddress}\`` : "Pendiente de confirmaci\xF3n"}
+
+\u{1F680} Tu token est\xE1 listo para ser lanzado!`;
+      } else {
+        return `\u274C **Error Creando Token:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async configureAI(params) {
+    if (params.length < 5) {
+      return "\u274C **Uso:** `configureAI <tokenAddress> <community> <marketing> <data> <trading>`\n\u{1F4DD} **Ejemplo:** `configureAI 0x123... true false true false`\n\u{1F4A1} **Par\xE1metros:**\n   \u2022 tokenAddress: Direcci\xF3n del contrato del token\n   \u2022 community: true/false para Community Manager\n   \u2022 marketing: true/false para Marketing AI\n   \u2022 data: true/false para Data Analyst\n   \u2022 trading: true/false para Trading Assistant";
+    }
+    const [tokenAddress, community, marketing, data, trading] = params;
+    if (!tokenAddress.startsWith("0x") || tokenAddress.length !== 42) {
+      return "\u274C **Error:** Direcci\xF3n de token inv\xE1lida";
+    }
+    const config = {
+      communityManager: community === "true",
+      marketingAI: marketing === "true",
+      dataAnalyst: data === "true",
+      tradingAssistant: trading === "true"
+    };
+    try {
+      const result = await this.launcherService.configureAIAgents(tokenAddress, config);
+      if (result.success) {
+        return `\u2705 **AI Agents Configurados Exitosamente!**
+
+\u{1F916} **Configuraci\xF3n Aplicada:**
+   \u2022 Community Manager: ${config.communityManager ? "\u2705" : "\u274C"}
+   \u2022 Marketing AI: ${config.marketingAI ? "\u2705" : "\u274C"}
+   \u2022 Data Analyst: ${config.dataAnalyst ? "\u2705" : "\u274C"}
+   \u2022 Trading Assistant: ${config.tradingAssistant ? "\u2705" : "\u274C"}
+
+\u{1F4CD} **TX Hash:** \`${result.transactionHash}\`
+\u{1F3AF} **Token:** \`${tokenAddress}\``;
+      } else {
+        return `\u274C **Error Configurando AI:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async createAIAgent(params) {
+    if (params.length < 4) {
+      return "\u274C **Uso:** `createAIAgent <tokenAddress> <tipo> <budget> <config>`\n\u{1F4DD} **Ejemplo:** `createAIAgent 0x123... community 0.1 Configuraci\xF3n del agente`\n\u{1F4A1} **Par\xE1metros:**\n   \u2022 tokenAddress: Direcci\xF3n del contrato del token\n   \u2022 tipo: community, marketing, data, trading\n   \u2022 budget: Presupuesto en ETH\n   \u2022 config: Configuraci\xF3n del agente (texto)";
+    }
+    const [tokenAddress, agentType, budgetStr, ...configParts] = params;
+    const budget = parseFloat(budgetStr);
+    const configuration = configParts.join(" ");
+    if (!tokenAddress.startsWith("0x") || tokenAddress.length !== 42) {
+      return "\u274C **Error:** Direcci\xF3n de token inv\xE1lida";
+    }
+    if (isNaN(budget) || budget <= 0) {
+      return "\u274C **Error:** El budget debe ser un n\xFAmero mayor a 0";
+    }
+    const validTypes = ["community", "marketing", "data", "trading"];
+    if (!validTypes.includes(agentType)) {
+      return `\u274C **Error:** Tipo de agente inv\xE1lido. Tipos v\xE1lidos: ${validTypes.join(", ")}`;
+    }
+    if (configuration.length < 10) {
+      return "\u274C **Error:** La configuraci\xF3n debe tener al menos 10 caracteres";
+    }
+    try {
+      const result = await this.launcherService.createAIAgent({
+        tokenAddress,
+        agentType,
+        budget,
+        configuration
+      });
+      if (result.success) {
+        return `\u2705 **AI Agent Creado Exitosamente!**
+
+\u{1F916} **Tipo:** ${agentType}
+\u{1F4B0} **Budget:** ${budget} ETH
+\u2699\uFE0F **Configuraci\xF3n:** ${configuration.substring(0, 100)}${configuration.length > 100 ? "..." : ""}
+\u{1F194} **Agent ID:** \`${result.agentId}\`
+\u{1F4CD} **TX Hash:** \`${result.transactionHash}\`
+\u{1F3AF} **Token:** \`${tokenAddress}\``;
+      } else {
+        return `\u274C **Error Creando AI Agent:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async getTokenInfo(params) {
+    if (params.length < 1) {
+      return "\u274C **Uso:** `getTokenInfo <tokenAddress>`\n\u{1F4DD} **Ejemplo:** `getTokenInfo 0x123...`";
+    }
+    const [tokenAddress] = params;
+    if (!tokenAddress.startsWith("0x") || tokenAddress.length !== 42) {
+      return "\u274C **Error:** Direcci\xF3n de token inv\xE1lida";
+    }
+    try {
+      const result = await this.launcherService.getTokenInfo(tokenAddress);
+      if (result.success) {
+        const { data } = result;
+        const launchDate = new Date(Number(data.launchTimestamp) * 1e3);
+        return `\u{1F4CA} **Informaci\xF3n del Token**
+
+\u{1F3F7}\uFE0F **Nombre:** ${data.name}
+\u{1F48E} **S\xEDmbolo:** ${data.symbol}
+\u{1F4B0} **Supply Total:** ${data.totalSupply.toLocaleString()}
+\u{1F522} **Decimales:** ${data.decimals}
+\u{1F680} **Lanzado:** ${launchDate.toLocaleString("es-ES")}
+\u{1F4CD} **Direcci\xF3n:** \`${tokenAddress}\``;
+      } else {
+        return `\u274C **Error Obteniendo Informaci\xF3n:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async getUserTokens(params) {
+    if (params.length < 1) {
+      return "\u274C **Uso:** `getUserTokens <userAddress>`\n\u{1F4DD} **Ejemplo:** `getUserTokens 0x123...`";
+    }
+    const [userAddress] = params;
+    if (!userAddress.startsWith("0x") || userAddress.length !== 42) {
+      return "\u274C **Error:** Direcci\xF3n de usuario inv\xE1lida";
+    }
+    try {
+      const result = await this.launcherService.getUserTokens(userAddress);
+      if (result.success && result.data && result.data.length > 0) {
+        let response = `\u{1F4CB} **Tokens del Usuario** (${result.data.length})
+
+`;
+        result.data.forEach((token, index) => {
+          response += `${index + 1}. **${token.name} (${token.symbol})**
+`;
+          response += `   \u{1F4CD} Direcci\xF3n: \`${token.tokenAddress}\`
+`;
+          response += `   \u{1F4B0} Supply: ${token.totalSupply.toLocaleString()}
+`;
+          response += `   \u{1F916} AI Agents: ${token.hasAIAgents ? "\u2705" : "\u274C"}
+`;
+          response += `   \u{1F4C5} Creado: ${new Date(token.createdAt * 1e3).toLocaleDateString("es-ES")}
+
+`;
+        });
+        return response;
+      } else if (result.success && (!result.data || result.data.length === 0)) {
+        return "\u{1F4ED} **No se encontraron tokens** para esta direcci\xF3n";
+      } else {
+        return `\u274C **Error Obteniendo Tokens:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async getAllTokens() {
+    try {
+      const result = await this.launcherService.getAllTokens();
+      if (result.success && result.data && result.data.length > 0) {
+        let response = `\u{1F310} **Todos los Tokens** (${result.data.length})
+
+`;
+        const tokensToShow = result.data.slice(0, 10);
+        tokensToShow.forEach((token, index) => {
+          response += `${index + 1}. **${token.name} (${token.symbol})**
+`;
+          response += `   \u{1F4CD} Direcci\xF3n: \`${token.tokenAddress}\`
+`;
+          response += `   \u{1F464} Creador: \`${token.creator}\`
+`;
+          response += `   \u{1F916} AI Agents: ${token.hasAIAgents ? "\u2705" : "\u274C"}
+
+`;
+        });
+        if (result.data.length > 10) {
+          response += `... y ${result.data.length - 10} tokens m\xE1s`;
+        }
+        return response;
+      } else if (result.success && (!result.data || result.data.length === 0)) {
+        return "\u{1F4ED} **No hay tokens creados** en la plataforma";
+      } else {
+        return `\u274C **Error Obteniendo Tokens:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async getTokenAgents(params) {
+    if (params.length < 1) {
+      return "\u274C **Uso:** `getTokenAgents <tokenAddress>`\n\u{1F4DD} **Ejemplo:** `getTokenAgents 0x123...`";
+    }
+    const [tokenAddress] = params;
+    if (!tokenAddress.startsWith("0x") || tokenAddress.length !== 42) {
+      return "\u274C **Error:** Direcci\xF3n de token inv\xE1lida";
+    }
+    try {
+      const result = await this.launcherService.getTokenAgents(tokenAddress);
+      if (result.success && result.data && result.data.length > 0) {
+        let response = `\u{1F916} **AI Agents del Token** (${result.data.length})
+
+`;
+        result.data.forEach((agent, index) => {
+          response += `${index + 1}. **${agent.agentType.toUpperCase()}**
+`;
+          response += `   \u{1F194} ID: \`${agent.agentId}\`
+`;
+          response += `   \u{1F464} Propietario: \`${agent.owner}\`
+`;
+          response += `   \u{1F4B0} Budget: ${ethers2.formatEther(agent.budget)} ETH
+`;
+          response += `   \u{1F4CA} Estado: ${agent.isActive ? "\u2705 Activo" : "\u274C Inactivo"}
+`;
+          response += `   \u{1F4C5} Creado: ${new Date(agent.createdAt * 1e3).toLocaleDateString("es-ES")}
+
+`;
+        });
+        return response;
+      } else if (result.success && (!result.data || result.data.length === 0)) {
+        return "\u{1F4ED} **No hay AI agents** configurados para este token";
+      } else {
+        return `\u274C **Error Obteniendo Agents:** ${result.error}`;
+      }
+    } catch (error) {
+      return `\u274C **Error Inesperado:** ${error.message}`;
+    }
+  }
+  async help() {
+    return `\u{1F680} **Comandos de Token Launcher**
+
+\u{1F4CB} **Comandos Disponibles:**
+
+1. **createToken** - Crear un nuevo token
+   \`createToken <nombre> <s\xEDmbolo> <supply> [enableAI]\`
+
+2. **configureAI** - Configurar AI agents para un token
+   \`configureAI <tokenAddress> <community> <marketing> <data> <trading>\`
+
+3. **createAIAgent** - Crear un AI agent espec\xEDfico
+   \`createAIAgent <tokenAddress> <tipo> <budget> <config>\`
+
+4. **getTokenInfo** - Obtener informaci\xF3n de un token
+   \`getTokenInfo <tokenAddress>\`
+
+5. **getUserTokens** - Ver tokens de un usuario
+   \`getUserTokens <userAddress>\`
+
+6. **getAllTokens** - Ver todos los tokens de la plataforma
+   \`getAllTokens\`
+
+7. **getTokenAgents** - Ver AI agents de un token
+   \`getTokenAgents <tokenAddress>\`
+
+8. **tokenHelp** - Mostrar esta ayuda
+   \`tokenHelp\`
+
+\u{1F4A1} **Tipos de AI Agents:**
+   \u2022 community - Community Manager
+   \u2022 marketing - Marketing AI
+   \u2022 data - Data Analyst
+   \u2022 trading - Trading Assistant
+
+\u{1F517} **Ejemplos de Uso:**
+   \u2022 \`createToken MiDeFiToken MDT 1000000 true\`
+   \u2022 \`configureAI 0x123... true false true false\`
+   \u2022 \`createAIAgent 0x123... community 0.1 Gesti\xF3n de comunidad\``;
+  }
+};
+
+// src/blockchain/tokenIntegration.ts
+import { elizaLogger } from "@elizaos/core";
+var TokenIntegration = class {
+  launcherService = null;
+  tokenCommands = null;
+  constructor() {
+    this.initializeBlockchain();
+  }
+  initializeBlockchain() {
+    try {
+      const privateKey = process.env.PRIVATE_KEY;
+      const rpcUrl = process.env.RPC_URL;
+      if (!privateKey || !rpcUrl) {
+        elizaLogger.warn("Blockchain no inicializado: faltan PRIVATE_KEY o RPC_URL en .env");
+        return;
+      }
+      this.launcherService = new LauncherService(privateKey, rpcUrl);
+      this.tokenCommands = new TokenCommands(this.launcherService);
+      elizaLogger.success("Blockchain inicializado correctamente");
+    } catch (error) {
+      elizaLogger.error(`Error inicializando blockchain: ${error}`);
+    }
+  }
+  // Método para registrar comandos en el agente
+  registerCommands(character2) {
+    if (!this.tokenCommands) {
+      elizaLogger.warn("No se pueden registrar comandos: blockchain no inicializado");
+      return;
+    }
+    if (!character2.commands) {
+      character2.commands = {};
+    }
+    character2.commands.createToken = this.tokenCommands.createToken.bind(this.tokenCommands);
+    character2.commands.configureAI = this.tokenCommands.configureAI.bind(this.tokenCommands);
+    character2.commands.createAIAgent = this.tokenCommands.createAIAgent.bind(this.tokenCommands);
+    character2.commands.getTokenInfo = this.tokenCommands.getTokenInfo.bind(this.tokenCommands);
+    character2.commands.getUserTokens = this.tokenCommands.getUserTokens.bind(this.tokenCommands);
+    character2.commands.getAllTokens = this.tokenCommands.getAllTokens.bind(this.tokenCommands);
+    character2.commands.getTokenAgents = this.tokenCommands.getTokenAgents.bind(this.tokenCommands);
+    character2.commands.tokenHelp = this.tokenCommands.help.bind(this.tokenCommands);
+    elizaLogger.success("Comandos de tokens registrados en el agente");
+  }
+  // Método para verificar el estado de la conexión blockchain
+  async checkBlockchainStatus() {
+    if (!this.launcherService) {
+      return false;
+    }
+    try {
+      const result = await this.launcherService.getAllTokens();
+      return result.success;
+    } catch (error) {
+      elizaLogger.error(`Error verificando estado blockchain: ${error}`);
+      return false;
+    }
+  }
+  // Método para obtener información del servicio
+  getServiceInfo() {
+    if (!this.launcherService) {
+      return {
+        status: "disconnected",
+        message: "Blockchain no inicializado"
+      };
+    }
+    return {
+      status: "connected",
+      message: "Blockchain conectado y funcionando",
+      commands: [
+        "createToken",
+        "configureAI",
+        "createAIAgent",
+        "getTokenInfo",
+        "getUserTokens",
+        "getAllTokens",
+        "getTokenAgents",
+        "tokenHelp"
+      ]
+    };
+  }
+};
+var tokenIntegration = new TokenIntegration();
+
+// src/httpServer.ts
+import express from "express";
+import cors from "cors";
+function createHTTPServer(agentRuntime) {
+  const app = express();
+  const PORT = process.env.SERVER_PORT || 3002;
+  app.use(cors());
+  app.use(express.json());
+  app.get("/", (req, res) => {
+    const blockchainStatus = tokenIntegration.getServiceInfo();
+    res.json({
+      status: "running",
+      agent: "Launcher",
+      version: "2.0",
+      blockchain: blockchainStatus
+    });
+  });
+  app.post("/:character/message", async (req, res) => {
+    try {
+      const { character: character2 } = req.params;
+      const { text, userId, userName } = req.body;
+      if (!text) {
+        return res.status(400).json({ error: "Mensaje requerido" });
+      }
+      if (agentRuntime && agentRuntime.character && agentRuntime.character.name === character2) {
+        const response = await processMessageWithAgent(text, character2, agentRuntime);
+        res.json([{
+          text: response,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          sender: "agent"
+        }]);
+      } else {
+        const response = await processMessage(text, character2);
+        res.json([{
+          text: response,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          sender: "agent"
+        }]);
+      }
+    } catch (error) {
+      console.error("Error procesando mensaje:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  app.get("/status", (req, res) => {
+    const blockchainStatus = tokenIntegration.getServiceInfo();
+    res.json({
+      status: "running",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      blockchain: blockchainStatus
+    });
+  });
+  app.post("/:character/command", async (req, res) => {
+    try {
+      const { character: character2 } = req.params;
+      const { command, params } = req.body;
+      if (!command) {
+        return res.status(400).json({ error: "Comando requerido" });
+      }
+      const response = await executeCommand(command, params, character2);
+      res.json({
+        success: true,
+        response,
+        command,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (error) {
+      console.error("Error ejecutando comando:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+  return app;
+}
+async function processMessageWithAgent(text, character2, agentRuntime) {
+  try {
+    return await processMessage(text, character2);
+  } catch (error) {
+    console.error("Error procesando mensaje con agente:", error);
+    return `Error procesando mensaje: ${error}`;
+  }
+}
+async function processMessage(text, character2) {
+  if (text.toLowerCase().includes("hola") || text.toLowerCase().includes("hello")) {
+    return `\xA1Hola! Soy el agente Launcher. \xBFEn qu\xE9 puedo ayudarte hoy?`;
+  }
+  if (text.toLowerCase().includes("token") || text.toLowerCase().includes("lanzar")) {
+    return `\xA1Perfecto! Puedo ayudarte a lanzar tokens. Usa el comando 'createToken' para empezar.`;
+  }
+  return `Entiendo tu mensaje: "${text}". Soy un agente especializado en lanzamiento de tokens con AI agents. \xBFQuieres que te ayude a crear un token o configurar AI agents?`;
+}
+async function executeCommand(command, params, character2) {
+  switch (command.toLowerCase()) {
+    case "createtoken":
+      return `Comando para crear token ejecutado. Par\xE1metros: ${params.join(", ")}`;
+    case "configureai":
+      return `Configurando AI agents con par\xE1metros: ${params.join(", ")}`;
+    case "help":
+      return `Comandos disponibles: createToken, configureAI, getTokenInfo, getUserTokens`;
+    default:
+      return `Comando ${command} no reconocido. Usa 'help' para ver comandos disponibles.`;
+  }
+}
+
 // src/index.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path3.dirname(__filename);
@@ -599,12 +1273,13 @@ var wait = (minTime = 1e3, maxTime = 3e3) => {
 };
 var nodePlugin;
 function createAgent(character2, db, cache, token) {
-  elizaLogger.success(
-    elizaLogger.successesTitle,
-    "Creating runtime for character",
-    character2.name
+  elizaLogger2.success(
+    `Creating runtime for character ${character2.name}`
   );
   nodePlugin ??= createNodePlugin();
+  if (character2.name === "Launcher") {
+    tokenIntegration.registerCommands(character2);
+  }
   return new AgentRuntime({
     databaseAdapter: db,
     token,
@@ -639,12 +1314,11 @@ async function startAgent(character2, directClient) {
     await runtime.initialize();
     runtime.clients = await initializeClients(character2, runtime);
     directClient.registerAgent(runtime);
-    elizaLogger.debug(`Started ${character2.name} as ${runtime.agentId}`);
+    elizaLogger2.debug(`Started ${character2.name} as ${runtime.agentId}`);
     return runtime;
   } catch (error) {
-    elizaLogger.error(
-      `Error starting agent for character ${character2.name}:`,
-      error
+    elizaLogger2.error(
+      `Error starting agent for character ${character2.name}: ${error}`
     );
     console.error(error);
     throw error;
@@ -676,33 +1350,51 @@ var startAgents = async () => {
     characters = await loadCharacters(charactersArg);
   }
   console.log("characters", characters);
+  let agentRuntime;
   try {
     for (const character2 of characters) {
-      await startAgent(character2, directClient);
+      agentRuntime = await startAgent(character2, directClient);
     }
   } catch (error) {
-    elizaLogger.error("Error starting agents:", error);
+    elizaLogger2.error(`Error starting agents: ${error}`);
   }
   while (!await checkPortAvailable(serverPort)) {
-    elizaLogger.warn(`Port ${serverPort} is in use, trying ${serverPort + 1}`);
+    elizaLogger2.warn(`Port ${serverPort} is in use, trying ${serverPort + 1}`);
     serverPort++;
   }
   directClient.startAgent = async (character2) => {
     return startAgent(character2, directClient);
   };
+  elizaLogger2.log(`Iniciando DirectClient en puerto ${serverPort}...`);
   directClient.start(serverPort);
+  elizaLogger2.log(`DirectClient iniciado exitosamente`);
   if (serverPort !== parseInt(settings3.SERVER_PORT || "3000")) {
-    elizaLogger.log(`Server started on alternate port ${serverPort}`);
+    elizaLogger2.log(`Server started on alternate port ${serverPort}`);
+  }
+  elizaLogger2.log(`Intentando crear HTTP server...`);
+  elizaLogger2.log(`agentRuntime existe: ${!!agentRuntime}`);
+  elizaLogger2.log(`serverPort: ${serverPort}`);
+  if (agentRuntime) {
+    elizaLogger2.log(`Creando HTTP server en puerto ${serverPort + 1}...`);
+    const httpApp = createHTTPServer(agentRuntime);
+    const httpPort = serverPort + 1;
+    httpApp.listen(httpPort, () => {
+      elizaLogger2.success(`HTTP Server running on port ${httpPort}`);
+      elizaLogger2.success(`Agent endpoints available at http://localhost:${httpPort}`);
+      elizaLogger2.success(`Frontend can connect to: http://localhost:${httpPort}`);
+    });
+  } else {
+    elizaLogger2.error(`No se pudo crear HTTP server: agentRuntime es undefined`);
   }
   const isDaemonProcess = process.env.DAEMON_PROCESS === "true";
   if (!isDaemonProcess) {
-    elizaLogger.log("Chat started. Type 'exit' to quit.");
+    elizaLogger2.log("Chat started. Type 'exit' to quit.");
     const chat = startChat(characters);
     chat();
   }
 };
 startAgents().catch((error) => {
-  elizaLogger.error("Unhandled error in startAgents:", error);
+  elizaLogger2.error(`Unhandled error in startAgents: ${error}`);
   process.exit(1);
 });
 export {

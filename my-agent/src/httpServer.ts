@@ -1,10 +1,48 @@
-import express from 'express';
+import express, { Express } from 'express';
 import cors from 'cors';
 import { tokenIntegration } from './blockchain/tokenIntegration.js';
 
-export function createHTTPServer(agentRuntime: any) {
+// Función para llamar a OpenAI directamente
+async function callOpenAI(prompt: string, apiKey: string): Promise<string> {
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'Eres un asistente útil y amigable.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content || 'No se pudo obtener respuesta de OpenAI';
+  } catch (error) {
+    console.error('Error llamando a OpenAI:', error);
+    throw error;
+  }
+}
+
+export function createHTTPServer(agentRuntime: any): Express {
   const app = express();
-  const PORT = process.env.SERVER_PORT || 3001;
+  const PORT = process.env.SERVER_PORT || 3002;
 
   // Middleware
   app.use(cors());
@@ -12,11 +50,20 @@ export function createHTTPServer(agentRuntime: any) {
 
   // Endpoint de estado
   app.get('/', (req, res) => {
+    const blockchainStatus = tokenIntegration.getServiceInfo();
+    const agentInfo = agentRuntime ? {
+      name: agentRuntime.character?.name || 'Unknown',
+      hasToken: !!agentRuntime.token,
+      tokenPrefix: agentRuntime.token ? agentRuntime.token.substring(0, 10) + '...' : 'No token',
+      modelProvider: agentRuntime.character?.modelProvider || 'Unknown'
+    } : { error: 'AgentRuntime no disponible' };
+    
     res.json({
       status: 'running',
       agent: 'Launcher',
       version: '2.0',
-      blockchain: tokenIntegration.getServiceInfo()
+      blockchain: blockchainStatus,
+      agentRuntime: agentInfo
     });
   });
 
@@ -30,14 +77,24 @@ export function createHTTPServer(agentRuntime: any) {
         return res.status(400).json({ error: 'Mensaje requerido' });
       }
 
-      // Simular respuesta del agente
-      const response = await processMessage(text, character);
-      
-      res.json([{
-        text: response,
-        timestamp: new Date().toISOString(),
-        sender: 'agent'
-      }]);
+      // Usar el agente real si está disponible
+      if (agentRuntime && agentRuntime.character && agentRuntime.character.name === character) {
+        // Aquí podrías integrar con el agente real
+        const response = await processMessageWithAgent(text, character, agentRuntime);
+        res.json([{
+          text: response,
+          timestamp: new Date().toISOString(),
+          sender: 'agent'
+        }]);
+      } else {
+        // Fallback a procesamiento local
+        const response = await processMessage(text, character);
+        res.json([{
+          text: response,
+          timestamp: new Date().toISOString(),
+          sender: 'agent'
+        }]);
+      }
     } catch (error: any) {
       console.error('Error procesando mensaje:', error);
       res.status(500).json({ error: error.message });
@@ -46,10 +103,11 @@ export function createHTTPServer(agentRuntime: any) {
 
   // Endpoint para obtener estado del agente
   app.get('/status', (req, res) => {
+    const blockchainStatus = tokenIntegration.getServiceInfo();
     res.json({
       status: 'running',
       timestamp: new Date().toISOString(),
-      blockchain: tokenIntegration.getServiceInfo()
+      blockchain: blockchainStatus
     });
   });
 
@@ -65,7 +123,7 @@ export function createHTTPServer(agentRuntime: any) {
 
       // Ejecutar comando del agente
       const response = await executeCommand(command, params, character);
-      
+
       res.json({
         success: true,
         response,
@@ -74,9 +132,9 @@ export function createHTTPServer(agentRuntime: any) {
       });
     } catch (error: any) {
       console.error('Error ejecutando comando:', error);
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
-        error: error.message 
+        error: error.message
       });
     }
   });
@@ -84,41 +142,73 @@ export function createHTTPServer(agentRuntime: any) {
   return app;
 }
 
-// Función para procesar mensajes
+// Placeholder functions for message processing and command execution
+async function processMessageWithAgent(text: string, character: string, agentRuntime: any): Promise<string> {
+  try {
+    // Usar el agente real con OpenAI
+    if (agentRuntime && agentRuntime.character && agentRuntime.character.system) {
+      // Construir el prompt completo para OpenAI
+      const systemPrompt = agentRuntime.character.system;
+      const characterName = agentRuntime.character.name;
+      const characterBio = agentRuntime.character.bio ? agentRuntime.character.bio.join('\n') : '';
+      
+      // Crear el prompt completo
+      const fullPrompt = `${systemPrompt}
+
+${characterBio}
+
+Usuario: ${text}
+
+${characterName} (respondiendo como ${characterName}):`;
+
+      // Intentar usar OpenAI real si tenemos el token
+      if (agentRuntime.token && agentRuntime.token.startsWith('sk-')) {
+        try {
+          console.log(`[DEBUG] Llamando a OpenAI con token: ${agentRuntime.token.substring(0, 10)}...`);
+          const openaiResponse = await callOpenAI(fullPrompt, agentRuntime.token);
+          console.log(`[DEBUG] Respuesta de OpenAI: ${openaiResponse.substring(0, 100)}...`);
+          return openaiResponse;
+        } catch (openaiError) {
+          console.error('[ERROR] Fallback a procesamiento local por error de OpenAI:', openaiError);
+          return await processMessage(text, character);
+        }
+      } else {
+        console.log(`[DEBUG] No hay token de OpenAI válido, usando fallback`);
+        return await processMessage(text, character);
+      }
+    } else {
+      // Fallback a procesamiento local
+      return await processMessage(text, character);
+    }
+  } catch (error) {
+    console.error('Error procesando mensaje con agente:', error);
+    return `Error procesando mensaje: ${error}`;
+  }
+}
+
 async function processMessage(text: string, character: string): Promise<string> {
-  // Aquí puedes implementar la lógica del agente
-  // Por ahora, devolvemos una respuesta simple
-  
+  // Aquí puedes integrar con el agente real
   if (text.toLowerCase().includes('hola') || text.toLowerCase().includes('hello')) {
-    return `¡Hola! Soy ${character}, el agente de lanzamiento de tokens. ¿En qué puedo ayudarte hoy?`;
+    return `¡Hola! Soy el agente Launcher. ¿En qué puedo ayudarte hoy?`;
   }
-  
-  if (text.toLowerCase().includes('token') || text.toLowerCase().includes('crear')) {
-    return `Para crear un token, usa el comando: createToken <nombre> <símbolo> <supply> [enableAI]`;
+
+  if (text.toLowerCase().includes('token') || text.toLowerCase().includes('lanzar')) {
+    return `¡Perfecto! Puedo ayudarte a lanzar tokens. Usa el comando 'createToken' para empezar.`;
   }
-  
-  if (text.toLowerCase().includes('ayuda') || text.toLowerCase().includes('help')) {
-    return `Comandos disponibles: createToken, configureAI, createAIAgent, getTokenInfo, getUserTokens, getAllTokens, getTokenAgents, tokenHelp`;
-  }
-  
+
   return `Entiendo tu mensaje: "${text}". Soy un agente especializado en lanzamiento de tokens con AI agents. ¿Quieres que te ayude a crear un token o configurar AI agents?`;
 }
 
-// Función para ejecutar comandos
 async function executeCommand(command: string, params: string[], character: string): Promise<string> {
-  // Aquí puedes implementar la ejecución real de comandos
-  // Por ahora, devolvemos respuestas simuladas
-  
-  switch (command) {
-    case 'createToken':
-      return `Comando createToken ejecutado con parámetros: ${params.join(', ')}`;
-    case 'configureAI':
-      return `Comando configureAI ejecutado con parámetros: ${params.join(', ')}`;
-    case 'createAIAgent':
-      return `Comando createAIAgent ejecutado con parámetros: ${params.join(', ')}`;
-    case 'getTokenInfo':
-      return `Comando getTokenInfo ejecutado con parámetros: ${params.join(', ')}`;
+  // Aquí puedes integrar con los comandos reales del agente
+  switch (command.toLowerCase()) {
+    case 'createtoken':
+      return `Comando para crear token ejecutado. Parámetros: ${params.join(', ')}`;
+    case 'configureai':
+      return `Configurando AI agents con parámetros: ${params.join(', ')}`;
+    case 'help':
+      return `Comandos disponibles: createToken, configureAI, getTokenInfo, getUserTokens`;
     default:
-      return `Comando ${command} no reconocido. Usa 'tokenHelp' para ver comandos disponibles.`;
+      return `Comando ${command} no reconocido. Usa 'help' para ver comandos disponibles.`;
   }
 }

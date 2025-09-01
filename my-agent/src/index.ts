@@ -132,7 +132,7 @@ const checkPortAvailable = (port: number): Promise<boolean> => {
 
 const startAgents = async () => {
   const directClient = new DirectClient();
-  let serverPort = parseInt(settings.SERVER_PORT || "3001");
+  let serverPort = parseInt(settings.SERVER_PORT || "3000");
   const args = parseArguments();
 
   let charactersArg = args.characters || args.character;
@@ -165,14 +165,21 @@ const startAgents = async () => {
     return startAgent(character, directClient);
   };
 
+  elizaLogger.log(`Iniciando DirectClient en puerto ${serverPort}...`);
   directClient.start(serverPort);
+  elizaLogger.log(`DirectClient iniciado exitosamente`);
 
-  if (serverPort !== parseInt(settings.SERVER_PORT || "3001")) {
+  if (serverPort !== parseInt(settings.SERVER_PORT || "3000")) {
     elizaLogger.log(`Server started on alternate port ${serverPort}`);
   }
 
   // Crear y iniciar servidor HTTP
+  elizaLogger.log(`Intentando crear HTTP server...`);
+  elizaLogger.log(`agentRuntime existe: ${!!agentRuntime}`);
+  elizaLogger.log(`serverPort: ${serverPort}`);
+  
   if (agentRuntime) {
+    elizaLogger.log(`Creando HTTP server en puerto ${serverPort + 1}...`);
     const httpApp = createHTTPServer(agentRuntime);
     const httpPort = serverPort + 1; // HTTP en puerto siguiente
     
@@ -181,6 +188,8 @@ const startAgents = async () => {
       elizaLogger.success(`Agent endpoints available at http://localhost:${httpPort}`);
       elizaLogger.success(`Frontend can connect to: http://localhost:${httpPort}`);
     });
+  } else {
+    elizaLogger.error(`No se pudo crear HTTP server: agentRuntime es undefined`);
   }
 
   const isDaemonProcess = process.env.DAEMON_PROCESS === "true";
